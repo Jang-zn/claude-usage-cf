@@ -26,13 +26,13 @@ Claude Code CLI의 토큰 사용량을 실시간으로 모니터링하는 터미
 - Claude Code가 설치되어 로그인된 Mac (macOS only)
 
 ```bash
-pip install git+https://github.com/your-username/claude-usage-cf.git
+pip install git+https://github.com/Jang-zn/claude-usage-cf.git
 ```
 
 또는 로컬에서 직접 설치:
 
 ```bash
-git clone https://github.com/your-username/claude-usage-cf.git
+git clone https://github.com/Jang-zn/claude-usage-cf.git
 cd claude-usage-cf
 pip install -e .
 ```
