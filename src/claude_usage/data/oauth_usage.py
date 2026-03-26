@@ -11,13 +11,16 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import subprocess
+import sys
 import threading
 import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 
 log = logging.getLogger(__name__)
 
@@ -51,13 +54,23 @@ _limit_seven_day_sonnet: float | None = None
 
 
 def _get_token() -> str | None:
+    # macOS: Keychain
+    if sys.platform == "darwin":
+        try:
+            raw = subprocess.check_output(
+                ["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],
+                stderr=subprocess.DEVNULL,
+                timeout=3,
+            ).decode().strip()
+            return json.loads(raw)["claudeAiOauth"]["accessToken"]
+        except Exception:
+            pass
+
+    # Windows / Linux: ~/.claude/.credentials.json
     try:
-        raw = subprocess.check_output(
-            ["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],
-            stderr=subprocess.DEVNULL,
-            timeout=3,
-        ).decode().strip()
-        return json.loads(raw)["claudeAiOauth"]["accessToken"]
+        creds_path = Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude")) / ".credentials.json"
+        data = json.loads(creds_path.read_text(encoding="utf-8"))
+        return data["claudeAiOauth"]["accessToken"]
     except Exception:
         return None
 
