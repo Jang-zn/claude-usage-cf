@@ -21,9 +21,12 @@ class UsageGaugePanel(Static):
         if period:
             self._period = period
 
-        period_label = {"day": "Today", "week": "This Week", "month": "This Month"}.get(
-            self._period, self._period
-        )
+        period_label = {
+            "day": "Today",
+            "session": "This Session (5h)",
+            "week": "This Week",
+            "month": "This Month",
+        }.get(self._period, self._period)
         lines: list[str] = [f"[bold]TOKEN USAGE ({period_label})[/bold]", ""]
 
         # Ensure all default models are shown
@@ -54,8 +57,14 @@ class UsageGaugePanel(Static):
             label = f"{name:<14}"
             tokens_str = format_tokens(total) if total > 0 else "—"
 
+            if mu.request_count > 0:
+                avg = total // mu.request_count
+                avg_str = f"  [dim]~{format_tokens(avg)}/req[/]"
+            else:
+                avg_str = ""
+
             lines.append(
-                f"[{color}]{label} {bar}  {tokens_str:>7}[/]"
+                f"[{color}]{label} {bar}  {tokens_str:>7}[/]{avg_str}"
             )
 
         self.update("\n".join(lines))

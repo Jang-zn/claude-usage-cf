@@ -36,6 +36,7 @@ class ClaudeUsageApp(App):
         Binding("r", "refresh", "Refresh"),
         Binding("a", "cycle_account", "Account"),
         Binding("1", "period_day", "Day"),
+        Binding("5", "period_session", "Session"),
         Binding("7", "period_week", "Week"),
         Binding("3", "period_month", "Month"),
     ]
@@ -51,7 +52,7 @@ class ClaudeUsageApp(App):
     def compose(self) -> ComposeResult:
         yield Static(
             "[b]q[/] Quit │ [b]r[/] Refresh │ [b]a[/] Account │ "
-            "[b]1[/] Day │ [b]7[/] Week │ [b]3[/] Month",
+            "[b]1[/] Day │ [b]5[/] Session │ [b]7[/] Week │ [b]3[/] Month",
             classes="footer-bar",
         )
         with VerticalScroll(id="main-container"):
@@ -82,18 +83,18 @@ class ClaudeUsageApp(App):
 
         self.current_period = self.config.display.default_period
         self.action_refresh()
-        self.set_interval(self.config.display.refresh_interval, self.action_refresh)
+        self.set_interval(self.config.display.refresh_interval, lambda: self.refresh_data(force_oauth=False))
 
     def action_refresh(self) -> None:
-        self.refresh_data()
+        self.refresh_data(force_oauth=True)
 
     @work(thread=True)
-    def refresh_data(self) -> None:
+    def refresh_data(self, force_oauth: bool = False) -> None:
         from .data.aggregator import aggregate_usage
 
         try:
             account = self.config.accounts[self.current_account_index]
-            data = aggregate_usage(account, self.current_period, self.config)
+            data = aggregate_usage(account, self.current_period, self.config, force_oauth=force_oauth)
             self.call_from_thread(self.update_widgets, data)
         except Exception:
             log.exception("Error refreshing data")
@@ -126,12 +127,16 @@ class ClaudeUsageApp(App):
 
     def action_period_day(self) -> None:
         self.current_period = "day"
-        self.action_refresh()
+        self.refresh_data(force_oauth=False)
+
+    def action_period_session(self) -> None:
+        self.current_period = "session"
+        self.refresh_data(force_oauth=False)
 
     def action_period_week(self) -> None:
         self.current_period = "week"
-        self.action_refresh()
+        self.refresh_data(force_oauth=False)
 
     def action_period_month(self) -> None:
         self.current_period = "month"
-        self.action_refresh()
+        self.refresh_data(force_oauth=False)

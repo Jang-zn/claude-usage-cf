@@ -74,6 +74,7 @@ class ModelUsage:
     model: str
     usage: TokenUsage = field(default_factory=TokenUsage)
     weekly_limit: int = 45_000_000
+    request_count: int = 0
 
 
 @dataclass

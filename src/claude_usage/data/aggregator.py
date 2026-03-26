@@ -48,11 +48,18 @@ def _aggregate_account(
     account: AccountConfig,
     period: str,
     config: AppConfig,
+    force_oauth: bool = False,
 ) -> AggregatedUsage:
     """Aggregate data for a single account."""
     claude_home = account.claude_home_path
-    lookback_days = PERIOD_DAYS.get(period, 7)
     cache_key = str(claude_home)
+
+    # Determine parse lookback
+    if period == "session":
+        parse_lookback = 30  # always keep 30 days in cache for OAuth calc
+    else:
+        lookback_days = PERIOD_DAYS.get(period, 7)
+        parse_lookback = max(lookback_days, 30)
 
     # Read cache for historical data
     cache = read_stats_cache(claude_home)
@@ -60,7 +67,7 @@ def _aggregate_account(
     # Read JSONL incrementally — new records only
     new_records = parse_all_jsonl(
         claude_home,
-        lookback_days=max(lookback_days, 30),  # always parse 30 days for cache
+        lookback_days=parse_lookback,
         incremental=True,
     )
 
@@ -73,61 +80,72 @@ def _aggregate_account(
     # Read sessions
     sessions = read_sessions(claude_home)
 
-    # Determine date range for the requested period
-    today = datetime.now(timezone.utc).date()
-    start_date = (today - timedelta(days=lookback_days - 1)).isoformat()
+    # ── Determine period-filtered records ─────────────────────────────────────
+    if period == "session":
+        now_utc = datetime.now(timezone.utc)
+        window_start = now_utc - timedelta(hours=5)
+        jsonl_records = [
+            rec for rec in all_jsonl_records
+            if rec.timestamp >= window_start
+        ]
+        start_date = None  # not used for session
+    else:
+        lookback_days = PERIOD_DAYS.get(period, 7)
+        # Use local timezone so "day" = calendar today in user's locale
+        today_local = datetime.now().date()
+        start_date = (today_local - timedelta(days=lookback_days - 1)).isoformat()
+        jsonl_records = [
+            rec for rec in all_jsonl_records
+            if rec.timestamp.astimezone().strftime("%Y-%m-%d") >= start_date
+        ]
 
-    # Filter records to period
-    jsonl_records = [
-        rec for rec in all_jsonl_records
-        if rec.timestamp.strftime("%Y-%m-%d") >= start_date
-    ]
-
-    # Build models dict — only include data within the requested period
+    # ── Build models dict ─────────────────────────────────────────────────────
     models: dict[str, ModelUsage] = {}
     last_computed = cache.last_computed_date
 
-    # From cache daily tokens (within period, before lastComputedDate)
-    for du in cache.daily_tokens:
-        if du.date < start_date:
-            continue
-        for model_short, count in du.by_model.items():
-            if not _is_valid_model(model_short):
+    if period != "session" and start_date is not None:
+        # From cache daily tokens (within period, before lastComputedDate)
+        for du in cache.daily_tokens:
+            if du.date < start_date:
                 continue
-            if model_short not in models:
-                family = get_pricing_family(model_short)
-                limit = config.get_limit(family)
-                models[model_short] = ModelUsage(model=model_short, weekly_limit=limit)
-            models[model_short].usage.output_tokens += count
+            for model_short, count in du.by_model.items():
+                if not _is_valid_model(model_short):
+                    continue
+                if model_short not in models:
+                    family = get_pricing_family(model_short)
+                    limit = config.get_limit(family)
+                    models[model_short] = ModelUsage(model=model_short, weekly_limit=limit)
+                models[model_short].usage.output_tokens += count
 
     # From JSONL records (data after lastComputedDate, within period)
     for rec in jsonl_records:
         if not _is_valid_model(rec.model):
             continue
-        date_str = rec.timestamp.strftime("%Y-%m-%d")
-        if last_computed and date_str <= last_computed:
-            continue
+        if period != "session" and last_computed:
+            date_str = rec.timestamp.astimezone().strftime("%Y-%m-%d")
+            if date_str <= last_computed:
+                continue
 
         if rec.model not in models:
             family = get_pricing_family(rec.model)
             limit = config.get_limit(family)
             models[rec.model] = ModelUsage(model=rec.model, weekly_limit=limit)
         models[rec.model].usage += rec.usage
+        models[rec.model].request_count += 1
 
-    # Build daily usage
+    # ── Build daily usage ─────────────────────────────────────────────────────
     daily_map: dict[str, DailyUsage] = {}
 
-    # From cache daily tokens
-    for du in cache.daily_tokens:
-        if du.date >= start_date:
-            daily_map[du.date] = du
+    if period != "session" and start_date is not None:
+        for du in cache.daily_tokens:
+            if du.date >= start_date:
+                daily_map[du.date] = du
 
-    # From JSONL records
     for rec in jsonl_records:
         if not _is_valid_model(rec.model):
             continue
-        date_str = rec.timestamp.strftime("%Y-%m-%d")
-        if last_computed and date_str <= last_computed:
+        date_str = rec.timestamp.astimezone().strftime("%Y-%m-%d")
+        if period != "session" and last_computed and date_str <= last_computed:
             continue
 
         if date_str not in daily_map:
@@ -139,7 +157,7 @@ def _aggregate_account(
 
     daily = sorted(daily_map.values(), key=lambda d: d.date)
 
-    # Build project usage
+    # ── Build project usage ───────────────────────────────────────────────────
     project_map: defaultdict[str, int] = defaultdict(int)
     for rec in jsonl_records:
         if rec.project:
@@ -151,7 +169,7 @@ def _aggregate_account(
         reverse=True,
     )
 
-    # Build activity summary
+    # ── Build activity summary ────────────────────────────────────────────────
     cat_tokens: defaultdict[str, int] = defaultdict(int)
     tool_tokens: defaultdict[str, int] = defaultdict(int)
 
@@ -166,25 +184,37 @@ def _aggregate_account(
         by_tool=dict(tool_tokens),
     )
 
-    # Build 5-hour rolling window usage
+    # ── Build 5-hour rolling window usage ────────────────────────────────────
     now_utc = datetime.now(timezone.utc)
-    window_start = now_utc - timedelta(hours=5)
+    window_start_5h = now_utc - timedelta(hours=5)
     win_by_model: defaultdict[str, int] = defaultdict(int)
     oldest_ts = None
     for rec in all_jsonl_records:
-        if rec.timestamp >= window_start and _is_valid_model(rec.model):
+        if rec.timestamp >= window_start_5h and _is_valid_model(rec.model):
             win_by_model[rec.model] += rec.usage.total
             if oldest_ts is None or rec.timestamp < oldest_ts:
                 oldest_ts = rec.timestamp
     reset_at = (oldest_ts + timedelta(hours=5)) if oldest_ts else None
     window = WindowUsage(by_model=dict(win_by_model), reset_at=reset_at)
 
-    week_all_tokens = sum(mu.usage.total for mu in models.values())
-    week_sonnet_tokens = models.get("sonnet-4.6", ModelUsage(model="sonnet-4.6")).usage.total
+    # ── OAuth quota: always based on 7-day data ───────────────────────────────
+    today_local = datetime.now().date()
+    week_start_str = (today_local - timedelta(days=6)).isoformat()
+    week_records = [
+        rec for rec in all_jsonl_records
+        if rec.timestamp.astimezone().strftime("%Y-%m-%d") >= week_start_str
+        and _is_valid_model(rec.model)
+    ]
+    week_all_tokens = sum(rec.usage.total for rec in week_records)
+    week_sonnet_tokens = sum(
+        rec.usage.total for rec in week_records if rec.model == "sonnet-4.6"
+    )
+
     oauth_usage = get_oauth_usage(
         win_tokens=sum(window.by_model.values()),
         week_all_tokens=week_all_tokens,
         week_sonnet_tokens=week_sonnet_tokens,
+        force=force_oauth,
     )
 
     return AggregatedUsage(
@@ -204,9 +234,10 @@ def aggregate_usage(
     account: AccountConfig,
     period: str,
     config: AppConfig,
+    force_oauth: bool = False,
 ) -> AggregatedUsage:
     """Aggregate usage for a single account (public API)."""
-    return _aggregate_account(account, period, config)
+    return _aggregate_account(account, period, config, force_oauth=force_oauth)
 
 
 def aggregate(

@@ -29,6 +29,7 @@ class HeaderWidget(Static):
         now = datetime.now().strftime("%H:%M:%S")
         period_label = {
             "day": "Today",
+            "session": "This Session (5h)",
             "week": "This Week",
             "month": "This Month",
         }.get(self._period, self._period)

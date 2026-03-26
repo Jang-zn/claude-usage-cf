@@ -106,6 +106,10 @@ def _should_refetch(now: float) -> bool:
         if ts and _last_fetch < ts <= now:
             log.debug("reset time passed (%s), triggering refetch", info.resets_at)
             return True
+        # resets_at가 과거인데 마지막 fetch 이후 60초 이상 경과 → stale, 재시도
+        if ts and ts <= now and now - _last_fetch >= 60:
+            log.debug("stale resets_at (%s), retrying", info.resets_at)
+            return True
     return False
 
 
@@ -146,10 +150,18 @@ def _do_fetch() -> None:
         log.debug("oauth/usage error: %s", e)
 
 
+def force_refetch() -> None:
+    """다음 get_oauth_usage 호출 시 즉시 API 재조회 (수동 r 키 등)."""
+    global _last_fetch
+    with _lock:
+        _last_fetch = 0.0
+
+
 def get_oauth_usage(
     win_tokens: int,
     week_all_tokens: int,
     week_sonnet_tokens: int,
+    force: bool = False,
 ) -> OAuthUsage | None:
     """
     필요 시 API를 호출하고, 저장된 limit으로 현재 토큰 → % 를 계산해 반환.
@@ -159,7 +171,7 @@ def get_oauth_usage(
 
     with _lock:
         now = time.time()
-        if _should_refetch(now):
+        if force or _should_refetch(now):
             _do_fetch()
 
         if _raw is None:

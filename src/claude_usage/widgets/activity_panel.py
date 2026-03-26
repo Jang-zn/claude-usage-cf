@@ -26,7 +26,11 @@ def _fmt_reset(ts: int | str | None) -> str:
     else:
         dt = datetime.fromtimestamp(ts, tz=timezone.utc).astimezone()
     now = datetime.now(timezone.utc)
-    secs = max(int((dt - now).total_seconds()), 0)
+    diff = (dt - now).total_seconds()
+    if diff <= 0:
+        # resets_at이 과거 → API가 아직 갱신 안 됨, 잠시 후 재시도
+        return "[dim]리셋 중...[/dim]"
+    secs = int(diff)
     h, rem = divmod(secs // 60, 60)
     clock = dt.strftime("%H:%M")
     if secs < 60:
