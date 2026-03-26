@@ -169,6 +169,18 @@ def _aggregate_account(
         reverse=True,
     )
 
+    # ── Count question turns per model (30s gap within session = new turn) ───
+    _TURN_GAP = 30  # seconds
+    _session_last: dict[str, datetime] = {}
+    for rec in sorted(jsonl_records, key=lambda r: r.timestamp):
+        if not _is_valid_model(rec.model) or rec.model not in models:
+            continue
+        sid = rec.session_id or "__no_session__"
+        last_ts = _session_last.get(sid)
+        if last_ts is None or (rec.timestamp - last_ts).total_seconds() > _TURN_GAP:
+            models[rec.model].turn_count += 1
+        _session_last[sid] = rec.timestamp
+
     # ── Build activity summary ────────────────────────────────────────────────
     cat_tokens: defaultdict[str, int] = defaultdict(int)
     tool_tokens: defaultdict[str, int] = defaultdict(int)

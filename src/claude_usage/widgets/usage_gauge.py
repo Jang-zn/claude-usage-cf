@@ -57,9 +57,9 @@ class UsageGaugePanel(Static):
             label = f"{name:<14}"
             tokens_str = format_tokens(total) if total > 0 else "—"
 
-            if mu.request_count > 0:
-                avg = total // mu.request_count
-                avg_str = f"  [dim]~{format_tokens(avg)}/req[/]"
+            if mu.turn_count > 0:
+                avg = total // mu.turn_count
+                avg_str = f"  [dim]~{format_tokens(avg)}/turn[/]"
             else:
                 avg_str = ""
 

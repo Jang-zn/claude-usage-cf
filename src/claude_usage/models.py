@@ -74,7 +74,8 @@ class ModelUsage:
     model: str
     usage: TokenUsage = field(default_factory=TokenUsage)
     weekly_limit: int = 45_000_000
-    request_count: int = 0
+    request_count: int = 0   # 개별 API 호출 수
+    turn_count: int = 0      # 질문 턴 수 (세션 내 30초 간격으로 구분)
 
 
 @dataclass
