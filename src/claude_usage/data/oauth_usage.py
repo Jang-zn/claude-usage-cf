@@ -28,6 +28,11 @@ _ENDPOINT = "https://api.anthropic.com/api/oauth/usage"
 _BETA = "oauth-2025-04-20"
 _UA = "claude-code/2.1.76"
 _SYNC_INTERVAL = 1800  # 30분
+_KEYCHAIN_SERVICE = "Claude Code-credentials"
+_CREDS_FILE = ".credentials.json"
+_OAUTH_KEY = "claudeAiOauth"
+_TOKEN_KEY = "accessToken"
+_DEFAULT_CLAUDE_DIR = Path.home() / ".claude"
 
 _lock = threading.Lock()
 
@@ -54,23 +59,23 @@ _limit_seven_day_sonnet: float | None = None
 
 
 def _get_token() -> str | None:
-    # macOS: Keychain
+    # macOS: Keychain (primary)
     if sys.platform == "darwin":
         try:
             raw = subprocess.check_output(
-                ["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],
+                ["security", "find-generic-password", "-s", _KEYCHAIN_SERVICE, "-w"],
                 stderr=subprocess.DEVNULL,
                 timeout=3,
             ).decode().strip()
-            return json.loads(raw)["claudeAiOauth"]["accessToken"]
+            return json.loads(raw)[_OAUTH_KEY][_TOKEN_KEY]
         except Exception:
             pass
 
-    # Windows / Linux: ~/.claude/.credentials.json
+    # Fallback: ~/.claude/.credentials.json (Windows, Linux, or macOS if Keychain fails)
     try:
-        creds_path = Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude")) / ".credentials.json"
-        data = json.loads(creds_path.read_text(encoding="utf-8"))
-        return data["claudeAiOauth"]["accessToken"]
+        config_dir = Path(os.environ.get("CLAUDE_CONFIG_DIR") or _DEFAULT_CLAUDE_DIR)
+        data = json.loads((config_dir / _CREDS_FILE).read_text(encoding="utf-8"))
+        return data[_OAUTH_KEY][_TOKEN_KEY]
     except Exception:
         return None
 
