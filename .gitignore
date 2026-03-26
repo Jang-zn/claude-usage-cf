@@ -30,3 +30,7 @@ htmlcov/
 
 # Misc
 *.log
+
+# Claude Code
+.claude/
+CLAUDE.md
