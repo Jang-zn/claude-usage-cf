@@ -19,6 +19,7 @@ from ..models import (
 from ..pricing import normalize_model, get_pricing_family
 from .cache_reader import read_stats_cache
 from .jsonl_parser import parse_all_jsonl
+from .oauth_usage import get_oauth_usage
 from .session_reader import read_sessions
 
 PERIOD_DAYS = {
@@ -178,16 +179,13 @@ def _aggregate_account(
     reset_at = (oldest_ts + timedelta(hours=5)) if oldest_ts else None
     window = WindowUsage(by_model=dict(win_by_model), reset_at=reset_at)
 
-    # OAuth usage: 1회 API 호출 → limit 역산 → 매 refresh마다 로컬 토큰으로 계산
-    from .oauth_usage import fetch_once, store_limits, compute_current
-
-    win_tokens = sum(win_by_model.values())
     week_all_tokens = sum(mu.usage.total for mu in models.values())
     week_sonnet_tokens = models.get("sonnet-4.6", ModelUsage(model="sonnet-4.6")).usage.total
-
-    fetch_once()  # 최초 1회만 실제 호출, 이후 no-op
-    store_limits(win_tokens, week_all_tokens, week_sonnet_tokens)  # limit 역산 (1회만)
-    oauth_usage = compute_current(win_tokens, week_all_tokens, week_sonnet_tokens)
+    oauth_usage = get_oauth_usage(
+        win_tokens=sum(window.by_model.values()),
+        week_all_tokens=week_all_tokens,
+        week_sonnet_tokens=week_sonnet_tokens,
+    )
 
     return AggregatedUsage(
         models=models,
