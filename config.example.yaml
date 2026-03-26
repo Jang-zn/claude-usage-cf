@@ -1,0 +1,18 @@
+accounts:
+  - name: "Personal"
+    claude_home: "~/.claude"
+  # - name: "Work"
+  #   claude_home: "~/.claude-work"
+
+limits:
+  - model: "opus"
+    weekly_tokens: 45_000_000
+  - model: "sonnet"
+    weekly_tokens: 45_000_000
+  - model: "haiku"
+    weekly_tokens: 45_000_000
+
+display:
+  refresh_interval: 5
+  default_period: "week"
+  show_cost: true
