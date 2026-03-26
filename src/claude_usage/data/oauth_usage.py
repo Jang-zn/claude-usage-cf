@@ -166,14 +166,18 @@ def get_oauth_usage(
             return None
 
         # limit 역산 (None인 항목만)
-        if _limit_five_hour is None and _raw.five_hour.utilization and win_tokens > 0:
-            _limit_five_hour = win_tokens / (_raw.five_hour.utilization / 100)
+        # utilization=0(리셋 직후)이어도 최소 1%로 가정해 limit 계산
+        _fh_util = _raw.five_hour.utilization
+        if _limit_five_hour is None and _fh_util is not None and win_tokens > 0:
+            _limit_five_hour = win_tokens / (max(_fh_util, 1.0) / 100)
 
-        if _limit_seven_day is None and _raw.seven_day.utilization and week_all_tokens > 0:
-            _limit_seven_day = week_all_tokens / (_raw.seven_day.utilization / 100)
+        _7d_util = _raw.seven_day.utilization
+        if _limit_seven_day is None and _7d_util is not None and week_all_tokens > 0:
+            _limit_seven_day = week_all_tokens / (max(_7d_util, 1.0) / 100)
 
-        if _limit_seven_day_sonnet is None and _raw.seven_day_sonnet.utilization and week_sonnet_tokens > 0:
-            _limit_seven_day_sonnet = week_sonnet_tokens / (_raw.seven_day_sonnet.utilization / 100)
+        _7ds_util = _raw.seven_day_sonnet.utilization
+        if _limit_seven_day_sonnet is None and _7ds_util is not None and week_sonnet_tokens > 0:
+            _limit_seven_day_sonnet = week_sonnet_tokens / (max(_7ds_util, 1.0) / 100)
 
         def pct(tokens: int, limit: float | None) -> float | None:
             return min(tokens / limit * 100, 100.0) if limit else None

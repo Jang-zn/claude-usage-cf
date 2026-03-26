@@ -68,22 +68,24 @@ class ActivityPanelWidget(Static):
         if oauth is not None and oauth.seven_day.utilization is not None:
             # Real data from API
             pct = oauth.seven_day.utilization
-            ratio = pct / 100
+            display_pct = max(pct, 1.0)
+            ratio = display_pct / 100
             bar = make_bar(ratio, width=20)
             color = "bold red" if pct > 90 else ("bold yellow" if pct > 70 else "#e8725c")
             lines.append(f"  [bold]Weekly[/bold]  [dim](all models)[/dim]")
-            lines.append(f"  [{color}]{bar}  {pct:.0f}% used[/]")
+            lines.append(f"  [{color}]{bar}  {display_pct:.0f}% used[/]")
             reset_str = _fmt_reset(oauth.seven_day.resets_at)
             if reset_str:
                 lines.append(f"  [dim]  {reset_str}[/dim]".replace("[/dim][dim]", ""))
 
             if oauth.seven_day_sonnet.utilization is not None:
                 pct_s = oauth.seven_day_sonnet.utilization
-                ratio_s = pct_s / 100
+                display_pct_s = max(pct_s, 1.0)
+                ratio_s = display_pct_s / 100
                 bar_s = make_bar(ratio_s, width=20)
                 color_s = "bold red" if pct_s > 90 else ("bold yellow" if pct_s > 70 else "#f0a500")
                 lines.append(f"  [bold]Weekly Sonnet[/bold]")
-                lines.append(f"  [{color_s}]{bar_s}  {pct_s:.0f}% used[/]")
+                lines.append(f"  [{color_s}]{bar_s}  {display_pct_s:.0f}% used[/]")
                 reset_s = _fmt_reset(oauth.seven_day_sonnet.resets_at)
                 if reset_s:
                     lines.append(f"  [dim]  {reset_s}[/dim]".replace("[/dim][dim]", ""))
@@ -115,11 +117,12 @@ class ActivityPanelWidget(Static):
         fh = oauth.five_hour
         if fh.utilization is not None:
             pct = fh.utilization
-            ratio = pct / 100
+            display_pct = max(pct, 1.0)  # 0% 리셋 직후에도 최소 1%로 표시
+            ratio = display_pct / 100
             bar = make_bar(ratio, width=20)
             color = "bold red" if pct > 90 else ("bold yellow" if pct > 70 else "#e8725c")
             lines.append(f"  [bold]Session[/bold]  [dim](5-hour window)[/dim]")
-            lines.append(f"  [{color}]{bar}  {pct:.0f}% used[/]")
+            lines.append(f"  [{color}]{bar}  {display_pct:.0f}% used[/]")
             reset_str = _fmt_reset(fh.resets_at)
             if reset_str:
                 lines.append(f"  [dim]  {reset_str}[/dim]".replace("[/dim][dim]", ""))
