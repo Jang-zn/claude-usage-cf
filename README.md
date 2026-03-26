@@ -23,7 +23,7 @@ Claude Code CLI의 토큰 사용량을 실시간으로 모니터링하는 터미
 
 **요구 사항**
 - Python 3.10+
-- Claude Code가 설치되어 로그인된 Mac (macOS only)
+- Claude Code가 설치되어 로그인된 상태 (macOS / Windows / Linux)
 
 ```bash
 pip install git+https://github.com/Jang-zn/claude-usage-cf.git
@@ -108,7 +108,7 @@ display:
 
 **이 앱은 어떤 정보도 외부로 전송하지 않습니다.**
 
-- 인증 토큰은 macOS **Keychain에서 런타임에 읽습니다** — 코드나 파일에 저장되지 않습니다
+- 인증 토큰은 **런타임에만 읽습니다** — macOS는 Keychain, Windows/Linux는 `~/.claude/.credentials.json`에서 읽으며 코드나 별도 파일에 저장되지 않습니다
 - JSONL 로그는 **로컬에서만 파싱**하며, 내용을 서버로 보내지 않습니다
 - Anthropic API (`/api/oauth/usage`) 호출은 **최소화**됩니다 — 한도값 역산 후 로컬 계산, 30분 주기 또는 리셋 시간 도달 시에만 재호출합니다
 - 네트워크 없이도 토큰/비용/프로젝트 현황은 모두 로컬에서 동작합니다
@@ -119,6 +119,6 @@ display:
 
 ## 참고
 
-- macOS 전용입니다 (Keychain에서 인증 토큰 자동 취득)
+- macOS / Windows / Linux 지원 (Claude Code 공식 지원 플랫폼)
 - Claude Max / Pro / Team 플랜 모두 동작합니다
 - 토큰 수치는 input + output 기준입니다 (cache 토큰 별도)
