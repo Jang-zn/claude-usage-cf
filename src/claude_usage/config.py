@@ -26,7 +26,7 @@ class LimitConfig:
 
 @dataclass
 class DisplayConfig:
-    refresh_interval: int = 5
+    refresh_interval: int = 1
     default_period: str = "day"
     show_cost: bool = True
 

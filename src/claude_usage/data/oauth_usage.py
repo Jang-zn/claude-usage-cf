@@ -133,16 +133,21 @@ def _do_fetch() -> None:
     try:
         with urllib.request.urlopen(req, timeout=8) as r:
             data = json.loads(r.read())
+            old_raw = _raw
             _raw = OAuthUsage(
                 five_hour=_parse_limit(data, "five_hour"),
                 seven_day=_parse_limit(data, "seven_day"),
                 seven_day_sonnet=_parse_limit(data, "seven_day_sonnet"),
             )
             _last_fetch = time.time()
-            # reset 발생 시 limit 재역산
-            _limit_five_hour = None
-            _limit_seven_day = None
-            _limit_seven_day_sonnet = None
+            # 진짜 window reset이 발생한 경우에만 limit 재역산
+            # (resets_at이 바뀌지 않으면 기존 limit 유지 → 로컬 트래킹 연속성 보장)
+            if old_raw is None or _raw.five_hour.resets_at != old_raw.five_hour.resets_at:
+                _limit_five_hour = None
+            if old_raw is None or _raw.seven_day.resets_at != old_raw.seven_day.resets_at:
+                _limit_seven_day = None
+            if old_raw is None or _raw.seven_day_sonnet.resets_at != old_raw.seven_day_sonnet.resets_at:
+                _limit_seven_day_sonnet = None
             log.debug("oauth/usage fetched: %s", _raw)
     except urllib.error.HTTPError as e:
         log.debug("oauth/usage HTTP %d", e.code)

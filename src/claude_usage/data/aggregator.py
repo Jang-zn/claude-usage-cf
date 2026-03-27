@@ -74,7 +74,11 @@ def _aggregate_account(
     # Accumulate records
     if cache_key not in _record_cache:
         _record_cache[cache_key] = []
-    _record_cache[cache_key].extend(new_records)
+    if new_records:
+        _record_cache[cache_key].extend(new_records)
+        # Trim records older than lookback window to bound memory
+        cutoff = datetime.now(timezone.utc) - timedelta(days=parse_lookback)
+        _record_cache[cache_key] = [r for r in _record_cache[cache_key] if r.timestamp >= cutoff]
     all_jsonl_records = _record_cache[cache_key]
 
     # Read sessions

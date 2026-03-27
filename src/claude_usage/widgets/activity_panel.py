@@ -126,7 +126,7 @@ class ActivityPanelWidget(Static):
             bar = make_bar(ratio, width=20)
             color = "bold red" if pct > 90 else ("bold yellow" if pct > 70 else "#e8725c")
             lines.append(f"  [bold]Session[/bold]  [dim](5-hour window)[/dim]")
-            lines.append(f"  [{color}]{bar}  {display_pct:.0f}% used[/]")
+            lines.append(f"  [{color}]{bar}  {pct:.2f}% used[/]")
             reset_str = _fmt_reset(fh.resets_at)
             if reset_str:
                 lines.append(f"  [dim]  {reset_str}[/dim]".replace("[/dim][dim]", ""))
