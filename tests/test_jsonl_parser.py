@@ -43,6 +43,28 @@ SAMPLE_ASSISTANT = {
     "sessionId": "sess-001",
 }
 
+SAMPLE_SUBAGENT = {
+    "type": "progress",
+    "data": {
+        "type": "agent_progress",
+        "agentId": "a08eb8cbd4fe53e03",
+        "message": {
+            "type": "assistant",
+            "message": {
+                "model": "claude-haiku-4-5-20251001",
+                "usage": {
+                    "input_tokens": 3000,
+                    "output_tokens": 1000,
+                    "cache_creation_input_tokens": 500,
+                    "cache_read_input_tokens": 200,
+                },
+            },
+        },
+    },
+    "timestamp": "2026-03-25T16:30:00.000Z",
+    "sessionId": "sess-001",
+}
+
 SAMPLE_USER = {"type": "user", "message": {"role": "user", "content": "hello"}}
 
 
@@ -157,6 +179,65 @@ class TestParseJsonlFile:
     def test_missing_file(self):
         records = parse_jsonl_file("/nonexistent/file.jsonl", incremental=False)
         assert records == []
+
+    def test_subagent_record_parsed(self, tmp_path):
+        filepath = str(tmp_path / "conv.jsonl")
+        _write_jsonl(filepath, [SAMPLE_USER, SAMPLE_ASSISTANT, SAMPLE_SUBAGENT])
+
+        records = parse_jsonl_file(filepath, incremental=False)
+        assert len(records) == 2
+
+        # First record: parent assistant
+        assert records[0].model == "opus-4.6"
+        assert records[0].usage.input_tokens == 100
+
+        # Second record: subagent
+        sub = records[1]
+        assert sub.model == "haiku-4.5"
+        assert sub.usage.input_tokens == 3000
+        assert sub.usage.output_tokens == 1000
+        assert sub.usage.cache_creation_tokens == 500
+        assert sub.usage.cache_read_tokens == 200
+        assert sub.session_id == "sess-001"
+        assert len(sub.activities) == 1
+        assert sub.activities[0].category == ActivityCategory.AGENT
+        assert sub.activities[0].name == "Subagent"
+        assert sub.activities[0].detail == "a08eb8cbd4fe53e03"
+
+    def test_subagent_missing_usage(self, tmp_path):
+        """Malformed subagent record should be skipped."""
+        bad_subagent = {
+            "type": "progress",
+            "data": {
+                "type": "agent_progress",
+                "agentId": "bad",
+                "message": {"type": "assistant", "message": {}},
+            },
+            "timestamp": "2026-03-25T16:30:00.000Z",
+            "sessionId": "sess-001",
+        }
+        filepath = str(tmp_path / "conv.jsonl")
+        _write_jsonl(filepath, [bad_subagent, SAMPLE_ASSISTANT])
+
+        records = parse_jsonl_file(filepath, incremental=False)
+        assert len(records) == 1
+        assert records[0].model == "opus-4.6"
+
+    def test_subagent_incremental(self, tmp_path):
+        """Incremental reads work with mixed assistant + subagent records."""
+        filepath = str(tmp_path / "conv.jsonl")
+        _write_jsonl(filepath, [SAMPLE_ASSISTANT])
+
+        records1 = parse_jsonl_file(filepath, incremental=True)
+        assert len(records1) == 1
+
+        # Append a subagent record
+        with open(filepath, "a") as f:
+            f.write(json.dumps(SAMPLE_SUBAGENT) + "\n")
+
+        records2 = parse_jsonl_file(filepath, incremental=True)
+        assert len(records2) == 1
+        assert records2[0].model == "haiku-4.5"
 
 
 class TestParseAllJsonl:

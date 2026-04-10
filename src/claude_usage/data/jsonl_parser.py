@@ -18,6 +18,7 @@ from ..models import (
 from ..pricing import normalize_model
 
 # Fast pre-filter before JSON parsing (check both with and without spaces)
+# Also matches progress records containing nested "type":"assistant" — intentional
 _ASSISTANT_MARKERS = ('"type":"assistant"', '"type": "assistant"')
 
 # Byte offsets per file for incremental reads
@@ -127,12 +128,75 @@ def _parse_activities(content: list[dict], usage: TokenUsage) -> list[ActivityRe
     return activities
 
 
+def _extract_usage_and_model(raw_usage: dict, raw_model: str) -> tuple[TokenUsage, str] | None:
+    """Extract TokenUsage and normalized model from raw dicts."""
+    if not isinstance(raw_usage, dict) or not isinstance(raw_model, str):
+        return None
+    usage = TokenUsage(
+        input_tokens=raw_usage.get("input_tokens", 0) or 0,
+        output_tokens=raw_usage.get("output_tokens", 0) or 0,
+        cache_read_tokens=raw_usage.get("cache_read_input_tokens", 0) or 0,
+        cache_creation_tokens=raw_usage.get("cache_creation_input_tokens", 0) or 0,
+    )
+    return usage, normalize_model(raw_model)
+
+
+def _extract_timestamp(data: dict) -> datetime:
+    """Extract timestamp from a JSONL record."""
+    ts_str = data.get("timestamp", "")
+    try:
+        return datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+    except (ValueError, AttributeError, TypeError):
+        return datetime.now(timezone.utc)
+
+
+def _parse_subagent_record(data: dict, project: str) -> UsageRecord | None:
+    """Parse a subagent progress record into a UsageRecord."""
+    inner = data.get("data")
+    if not isinstance(inner, dict) or inner.get("type") != "agent_progress":
+        return None
+
+    # Navigate: data.message.message.{usage, model}
+    wrapper = inner.get("message")
+    if not isinstance(wrapper, dict):
+        return None
+    msg = wrapper.get("message")
+    if not isinstance(msg, dict):
+        return None
+
+    result = _extract_usage_and_model(msg.get("usage"), msg.get("model", ""))
+    if result is None:
+        return None
+    usage, model = result
+
+    return UsageRecord(
+        timestamp=_extract_timestamp(data),
+        model=model,
+        usage=usage,
+        project=project,
+        session_id=data.get("sessionId", ""),
+        activities=[ActivityRecord(
+            category=ActivityCategory.AGENT,
+            name="Subagent",
+            detail=inner.get("agentId", ""),
+            tokens=TokenUsage(
+                input_tokens=usage.input_tokens,
+                output_tokens=usage.output_tokens,
+                cache_read_tokens=usage.cache_read_tokens,
+                cache_creation_tokens=usage.cache_creation_tokens,
+            ),
+        )],
+    )
+
+
 def parse_jsonl_file(filepath: str, incremental: bool = True) -> list[UsageRecord]:
     """Parse a single JSONL file, optionally from last known offset."""
     records: list[UsageRecord] = []
     start_offset = _file_offsets.get(filepath, 0) if incremental else 0
 
     try:
+        project = _extract_project_name(filepath)
+
         with open(filepath, "r", encoding="utf-8") as f:
             if start_offset > 0:
                 f.seek(start_offset)
@@ -151,49 +215,34 @@ def parse_jsonl_file(filepath: str, incremental: bool = True) -> list[UsageRecor
                 except (json.JSONDecodeError, ValueError):
                     continue
 
-                if data.get("type") != "assistant":
-                    continue
+                record_type = data.get("type")
 
-                msg = data.get("message")
-                if not isinstance(msg, dict):
-                    continue
+                if record_type == "assistant":
+                    msg = data.get("message")
+                    if not isinstance(msg, dict):
+                        continue
 
-                raw_usage = msg.get("usage")
-                if not isinstance(raw_usage, dict):
-                    continue
+                    result = _extract_usage_and_model(msg.get("usage"), msg.get("model", ""))
+                    if result is None:
+                        continue
+                    usage, model = result
 
-                raw_model = msg.get("model", "")
-                if not isinstance(raw_model, str):
-                    continue
-                model = normalize_model(raw_model)
+                    content = msg.get("content", [])
+                    activities = _parse_activities(content, usage) if isinstance(content, list) else []
 
-                usage = TokenUsage(
-                    input_tokens=raw_usage.get("input_tokens", 0) or 0,
-                    output_tokens=raw_usage.get("output_tokens", 0) or 0,
-                    cache_read_tokens=raw_usage.get("cache_read_input_tokens", 0) or 0,
-                    cache_creation_tokens=raw_usage.get("cache_creation_input_tokens", 0) or 0,
-                )
+                    records.append(UsageRecord(
+                        timestamp=_extract_timestamp(data),
+                        model=model,
+                        usage=usage,
+                        project=project,
+                        session_id=data.get("sessionId", ""),
+                        activities=activities,
+                    ))
 
-                ts_str = data.get("timestamp", "")
-                try:
-                    timestamp = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
-                except (ValueError, AttributeError, TypeError):
-                    timestamp = datetime.now(timezone.utc)
-
-                session_id = data.get("sessionId", "")
-                project = _extract_project_name(filepath)
-
-                content = msg.get("content", [])
-                activities = _parse_activities(content, usage) if isinstance(content, list) else []
-
-                records.append(UsageRecord(
-                    timestamp=timestamp,
-                    model=model,
-                    usage=usage,
-                    project=project,
-                    session_id=session_id,
-                    activities=activities,
-                ))
+                elif record_type == "progress":
+                    rec = _parse_subagent_record(data, project)
+                    if rec is not None:
+                        records.append(rec)
 
             # Update offset to current position
             _file_offsets[filepath] = f.tell()

@@ -23,11 +23,8 @@ class TokenUsage:
 
     @property
     def total(self) -> int:
-        return self.input_tokens + self.output_tokens
-
-    @property
-    def total_with_cache(self) -> int:
-        return self.total + self.cache_read_tokens + self.cache_creation_tokens
+        """ITPM 산정 기준: input + output + cache_creation (cache_read 제외)."""
+        return self.input_tokens + self.output_tokens + self.cache_creation_tokens
 
     def __iadd__(self, other: TokenUsage) -> TokenUsage:
         self.input_tokens += other.input_tokens
@@ -100,7 +97,7 @@ class ActivitySummary:
 @dataclass
 class WindowUsage:
     """5-hour rolling window usage per model."""
-    by_model: dict[str, int] = field(default_factory=dict)  # model -> total tokens (input+output)
+    by_model: dict[str, int] = field(default_factory=dict)  # model -> ITPM tokens
     reset_at: datetime | None = None  # oldest_record.timestamp + 5h
 
 
