@@ -29,7 +29,7 @@ _PROJECT_PATTERNS = [
     re.compile(r'-projects-(.+)'),
     re.compile(r'-workspace-(.+)'),
 ]
-_HOME_FALLBACK = re.compile(r'^-[A-Z][a-z]+-[a-z]+-(.+)$')
+_HOME_FALLBACK = re.compile(r'^-(?:[A-Za-z]-)?[A-Z][a-z]+-[a-z]+-(.+)$')
 
 
 def reset_offsets() -> None:

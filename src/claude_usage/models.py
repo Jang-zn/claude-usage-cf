@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
+from pathlib import Path
 
 
 class ActivityCategory(Enum):
@@ -63,7 +64,7 @@ class SessionInfo:
 
     @property
     def project_name(self) -> str:
-        return self.cwd.rstrip("/").rsplit("/", 1)[-1] if self.cwd else ""
+        return Path(self.cwd).name if self.cwd else ""
 
 
 @dataclass
