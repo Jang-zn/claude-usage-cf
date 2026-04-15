@@ -101,7 +101,7 @@ ProjectChartWidget {
     padding: 0 1;
 }
 
-ActivityPanelWidget {
+QuotaPanelWidget {
     width: 1fr;
     height: auto;
     min-height: 12;

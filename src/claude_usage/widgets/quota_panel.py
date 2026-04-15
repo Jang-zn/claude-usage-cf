@@ -38,7 +38,7 @@ def _fmt_reset(ts: int | str | None) -> str:
     return f"[#f0a500]{h}h {rem:02d}m[/] (resets {clock})"
 
 
-class ActivityPanelWidget(Static):
+class QuotaPanelWidget(Static):
     """Shows session window + weekly quota status."""
 
     _data: AggregatedUsage | None = None
@@ -99,7 +99,7 @@ class ActivityPanelWidget(Static):
             for model in DEFAULT_MODELS:
                 mu = data.models.get(model)
                 limit = mu.weekly_limit if mu else 45_000_000
-                used = mu.usage.total if mu else 0
+                used = mu.usage.itpm_total if mu else 0
                 left = max(limit - used, 0)
                 pct_used = used / limit * 100 if limit > 0 else 0.0
                 ratio_used = min(used / limit, 1.0) if limit > 0 else 0.0

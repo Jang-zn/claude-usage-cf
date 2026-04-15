@@ -14,7 +14,7 @@ from .config import AppConfig, load_config
 from .models import AggregatedUsage
 from .theme import APP_CSS
 from .widgets import (
-    ActivityPanelWidget,
+    QuotaPanelWidget,
     CostPanelWidget,
     DailyChartWidget,
     HeaderWidget,
@@ -60,7 +60,7 @@ class ClaudeUsageApp(App):
             yield UsageGaugePanel()
             with Horizontal(id="middle-row"):
                 yield ProjectChartWidget()
-                yield ActivityPanelWidget()
+                yield QuotaPanelWidget()
             with Horizontal(id="bottom-row"):
                 yield DailyChartWidget()
                 yield CostPanelWidget()
@@ -108,7 +108,7 @@ class ClaudeUsageApp(App):
             (CostPanelWidget, lambda w: w.update_costs(data.models)),
             (DailyChartWidget, lambda w: w.update_daily(data.daily)),
             (ProjectChartWidget, lambda w: w.update_projects(data.projects)),
-            (ActivityPanelWidget, lambda w: w.update_activity(data)),
+            (QuotaPanelWidget, lambda w: w.update_activity(data)),
             (SessionListWidget, lambda w: w.update_sessions(data.sessions)),
         ]
 
