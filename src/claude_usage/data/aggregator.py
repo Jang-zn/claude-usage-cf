@@ -9,6 +9,7 @@ from ..config import AppConfig, AccountConfig
 from ..models import (
     AggregatedUsage,
     ActivitySummary,
+    CategoryStats,
     DailyUsage,
     ModelUsage,
     ProjectUsage,
@@ -16,7 +17,7 @@ from ..models import (
     UsageRecord,
     WindowUsage,
 )
-from ..pricing import normalize_model, get_pricing_family
+from ..pricing import calculate_cost, normalize_model, get_pricing_family
 from .cache_reader import read_stats_cache
 from .jsonl_parser import parse_all_jsonl
 from .oauth_usage import get_oauth_usage
@@ -155,7 +156,7 @@ def _aggregate_account(
         if date_str not in daily_map:
             daily_map[date_str] = DailyUsage(date=date_str)
         day = daily_map[date_str]
-        tokens = rec.usage.total
+        tokens = rec.usage.itpm_total
         day.total_tokens += tokens
         day.by_model[rec.model] = day.by_model.get(rec.model, 0) + tokens
 
@@ -165,7 +166,7 @@ def _aggregate_account(
     project_map: defaultdict[str, int] = defaultdict(int)
     for rec in jsonl_records:
         if rec.project:
-            project_map[rec.project] += rec.usage.total
+            project_map[rec.project] += rec.usage.itpm_total
 
     projects = sorted(
         [ProjectUsage(project=p, total_tokens=t) for p, t in project_map.items()],
@@ -191,7 +192,7 @@ def _aggregate_account(
 
     for rec in jsonl_records:
         for act in rec.activities:
-            t = act.tokens.total
+            t = act.tokens.itpm_total
             cat_tokens[act.category.value] += t
             tool_tokens[act.name] += t
 
@@ -207,7 +208,7 @@ def _aggregate_account(
     oldest_ts = None
     for rec in all_jsonl_records:
         if rec.timestamp >= window_start_5h and _is_valid_model(rec.model):
-            win_by_model[rec.model] += rec.usage.total
+            win_by_model[rec.model] += rec.usage.itpm_total
             if oldest_ts is None or rec.timestamp < oldest_ts:
                 oldest_ts = rec.timestamp
     reset_at = (oldest_ts + timedelta(hours=5)) if oldest_ts else None
@@ -221,9 +222,9 @@ def _aggregate_account(
         if rec.timestamp.astimezone().strftime("%Y-%m-%d") >= week_start_str
         and _is_valid_model(rec.model)
     ]
-    week_all_tokens = sum(rec.usage.total for rec in week_records)
+    week_all_tokens = sum(rec.usage.itpm_total for rec in week_records)
     week_sonnet_tokens = sum(
-        rec.usage.total for rec in week_records if rec.model == "sonnet-4.6"
+        rec.usage.itpm_total for rec in week_records if rec.model == "sonnet-4.6"
     )
 
     oauth_usage = get_oauth_usage(
@@ -232,6 +233,50 @@ def _aggregate_account(
         week_sonnet_tokens=week_sonnet_tokens,
         force=force_oauth,
     )
+
+    # ── Build category stats ──────────────────────────────────────────────────
+    categories: dict[str, CategoryStats] = {}
+    for rec in jsonl_records:
+        if not _is_valid_model(rec.model):
+            continue
+        cat = rec.category or "General"
+        if cat not in categories:
+            categories[cat] = CategoryStats(category=cat)
+        stats = categories[cat]
+        stats.tokens += rec.usage
+        stats.turn_count += 1
+        cost_info = calculate_cost(rec.model, rec.usage)
+        stats.cost_usd += cost_info["total"]
+
+    # ── Compute one-shot rate ─────────────────────────────────────────────────
+    # "edit tool" = any tool in the edit set used in a turn
+    _EDIT_TOOLS = frozenset({"Edit", "Write", "FileEditTool", "FileWriteTool",
+                              "NotebookEdit", "cursor:edit", "MultiEdit"})
+    _ONE_SHOT_WINDOW = 30.0  # seconds
+
+    # Collect edit-containing turns sorted by (session_id, timestamp)
+    edit_turns: list[tuple[str, datetime, datetime]] = []  # (session_id, ts, ts)
+    for rec in jsonl_records:
+        if any(t in _EDIT_TOOLS for t in rec.tools_used):
+            edit_turns.append((rec.session_id or "", rec.timestamp, rec.timestamp))
+
+    one_shot_rate: float | None = None
+    if edit_turns:
+        # Sort by session then timestamp
+        edit_turns_sorted = sorted(edit_turns, key=lambda x: (x[0], x[1]))
+        total_edit = len(edit_turns_sorted)
+        one_shot_count = 0
+        for i, (sid, ts, _) in enumerate(edit_turns_sorted):
+            # Check if there's a next edit turn in the same session within 30s
+            if i + 1 < len(edit_turns_sorted):
+                next_sid, next_ts, _ = edit_turns_sorted[i + 1]
+                if next_sid == sid and (next_ts - ts).total_seconds() <= _ONE_SHOT_WINDOW:
+                    pass  # not one-shot: follow-up edit within window
+                else:
+                    one_shot_count += 1
+            else:
+                one_shot_count += 1  # last turn has no successor
+        one_shot_rate = one_shot_count / total_edit if total_edit > 0 else None
 
     return AggregatedUsage(
         models=models,
@@ -243,6 +288,8 @@ def _aggregate_account(
         oauth_usage=oauth_usage,
         period=period,
         account_name=account.name,
+        categories=categories,
+        one_shot_rate=one_shot_rate,
     )
 
 

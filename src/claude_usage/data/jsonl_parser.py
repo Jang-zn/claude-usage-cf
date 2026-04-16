@@ -9,6 +9,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from ..classifier import classify_turn
 from ..models import (
     ActivityCategory,
     ActivityRecord,
@@ -16,6 +17,9 @@ from ..models import (
     UsageRecord,
 )
 from ..pricing import normalize_model
+
+# Maximum length of first_user_message to pass to classifier
+_FIRST_MSG_MAX_LEN = 500
 
 # Fast pre-filter before JSON parsing (check both with and without spaces)
 # Also matches progress records containing nested "type":"assistant" — intentional
@@ -214,6 +218,61 @@ def _make_dedup_key(msg_id: str | None, session_id: str, timestamp_iso: str) -> 
     return f"{session_id}:{timestamp_iso}"
 
 
+def _extract_first_user_message(filepath: str) -> str:
+    """Scan the JSONL file from the beginning to find the first user message text.
+
+    Returns up to _FIRST_MSG_MAX_LEN characters of that message, or "" if not found.
+    Always reads from byte 0 (full scan), regardless of incremental offsets.
+    """
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            for line in f:
+                try:
+                    data = json.loads(line)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+                if data.get("type") != "user":
+                    continue
+                msg = data.get("message")
+                if not isinstance(msg, dict):
+                    continue
+                content = msg.get("content", [])
+                if isinstance(content, str):
+                    text = content
+                elif isinstance(content, list) and content:
+                    first = content[0]
+                    if isinstance(first, dict):
+                        text = first.get("text", "")
+                    else:
+                        text = str(first)
+                else:
+                    continue
+                if text:
+                    return text[:_FIRST_MSG_MAX_LEN]
+    except (OSError, IOError):
+        pass
+    return ""
+
+
+def _collect_tools_and_bash(content: list[dict]) -> tuple[list[str], list[str]]:
+    """Return (tool_names, bash_commands) for all tool_use blocks in content."""
+    tools: list[str] = []
+    bash_commands: list[str] = []
+    for block in content:
+        if block.get("type") != "tool_use":
+            continue
+        name = block.get("name", "")
+        if name:
+            tools.append(name)
+        if name == "Bash":
+            inp = block.get("input", {})
+            if isinstance(inp, dict):
+                cmd = inp.get("command", "")
+                if cmd:
+                    bash_commands.append(cmd)
+    return tools, bash_commands
+
+
 def parse_jsonl_file(
     filepath: str,
     incremental: bool = True,
@@ -233,6 +292,9 @@ def parse_jsonl_file(
 
     try:
         project = _extract_project_name(filepath)
+
+        # Extract the first user message for classification (full file scan, once)
+        first_user_message = _extract_first_user_message(filepath)
 
         with open(filepath, "r", encoding="utf-8") as f:
             if start_offset > 0:
@@ -275,7 +337,19 @@ def parse_jsonl_file(
                     usage, model = result
 
                     content = msg.get("content", [])
-                    activities = _parse_activities(content, usage) if isinstance(content, list) else []
+                    if isinstance(content, list):
+                        activities = _parse_activities(content, usage)
+                        tools_used, bash_commands = _collect_tools_and_bash(content)
+                    else:
+                        activities = []
+                        tools_used = []
+                        bash_commands = []
+
+                    category = classify_turn(
+                        tools_used,
+                        bash_commands,
+                        first_user_message,
+                    ).value
 
                     records.append(UsageRecord(
                         timestamp=_extract_timestamp(data),
@@ -284,6 +358,9 @@ def parse_jsonl_file(
                         project=project,
                         session_id=session_id,
                         activities=activities,
+                        category=category,
+                        tools_used=tools_used,
+                        bash_commands=bash_commands,
                     ))
 
                 elif record_type == "progress":

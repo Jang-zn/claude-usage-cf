@@ -21,17 +21,26 @@ class TokenUsage:
     output_tokens: int = 0
     cache_read_tokens: int = 0
     cache_creation_tokens: int = 0
+    web_search_requests: int = 0
 
     @property
-    def total(self) -> int:
-        """ITPM 산정 기준: input + output + cache_creation (cache_read 제외)."""
+    def itpm_total(self) -> int:
+        """ITPM 산정 기준: input + output + cache_creation (cache_read 제외).
+        Used for quota/window/gauge calculations where cache_read is excluded."""
         return self.input_tokens + self.output_tokens + self.cache_creation_tokens
+
+    @property
+    def billable_total(self) -> int:
+        """전체 청구 토큰: input + output + cache_read + cache_creation.
+        Used for cost calculations and export where all billed tokens must be counted."""
+        return self.input_tokens + self.output_tokens + self.cache_read_tokens + self.cache_creation_tokens
 
     def __iadd__(self, other: TokenUsage) -> TokenUsage:
         self.input_tokens += other.input_tokens
         self.output_tokens += other.output_tokens
         self.cache_read_tokens += other.cache_read_tokens
         self.cache_creation_tokens += other.cache_creation_tokens
+        self.web_search_requests += other.web_search_requests
         return self
 
 
@@ -51,6 +60,9 @@ class UsageRecord:
     project: str = ""
     session_id: str = ""
     activities: list[ActivityRecord] = field(default_factory=list)
+    category: str = "General"
+    tools_used: list[str] = field(default_factory=list)
+    bash_commands: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -103,6 +115,14 @@ class WindowUsage:
 
 
 @dataclass
+class CategoryStats:
+    category: str
+    tokens: TokenUsage = field(default_factory=TokenUsage)
+    turn_count: int = 0
+    cost_usd: float = 0.0
+
+
+@dataclass
 class AggregatedUsage:
     models: dict[str, ModelUsage] = field(default_factory=dict)
     daily: list[DailyUsage] = field(default_factory=list)
@@ -113,3 +133,5 @@ class AggregatedUsage:
     oauth_usage: object | None = None  # OAuthUsage | None (avoid circular import)
     period: str = "week"
     account_name: str = "Personal"
+    categories: dict[str, CategoryStats] = field(default_factory=dict)
+    one_shot_rate: float | None = None
