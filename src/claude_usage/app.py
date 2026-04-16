@@ -14,6 +14,7 @@ from .config import AppConfig, load_config
 from .models import AggregatedUsage
 from .theme import APP_CSS
 from .widgets import (
+    CategoryPanelWidget,
     QuotaPanelWidget,
     CostPanelWidget,
     DailyChartWidget,
@@ -35,6 +36,7 @@ class ClaudeUsageApp(App):
         Binding("q", "quit", "Quit"),
         Binding("r", "refresh", "Refresh"),
         Binding("a", "cycle_account", "Account"),
+        Binding("c", "toggle_category", "Category"),
         Binding("1", "period_day", "Day"),
         Binding("5", "period_session", "Session"),
         Binding("7", "period_week", "Week"),
@@ -48,10 +50,11 @@ class ClaudeUsageApp(App):
         self.current_period: str = "week"
         self.config: AppConfig = AppConfig()
         self.aggregated_data: AggregatedUsage = AggregatedUsage()
+        self.show_category: bool = False
 
     def compose(self) -> ComposeResult:
         yield Static(
-            "[b]q[/] Quit │ [b]r[/] Refresh │ [b]a[/] Account │ "
+            "[b]q[/] Quit │ [b]r[/] Refresh │ [b]a[/] Account │ [b]c[/] Category │ "
             "[b]1[/] Day │ [b]5[/] Session │ [b]7[/] Week │ [b]3[/] Month",
             classes="footer-bar",
         )
@@ -59,11 +62,12 @@ class ClaudeUsageApp(App):
             yield HeaderWidget()
             yield UsageGaugePanel()
             with Horizontal(id="middle-row"):
-                yield ProjectChartWidget()
+                yield ProjectChartWidget(id="project-chart")
+                yield CategoryPanelWidget(id="category-panel")
                 yield QuotaPanelWidget()
             with Horizontal(id="bottom-row"):
                 yield DailyChartWidget()
-                yield CostPanelWidget()
+                yield CostPanelWidget(id="cost-panel")
             yield SessionListWidget()
 
     def on_mount(self) -> None:
@@ -82,8 +86,39 @@ class ClaudeUsageApp(App):
             self.config = load_config()
 
         self.current_period = self.config.display.default_period
+
+        # Apply show_cost config: hide CostPanelWidget if disabled
+        if not self.config.display.show_cost:
+            try:
+                cost_widget = self.query_one("#cost-panel", CostPanelWidget)
+                cost_widget.styles.display = "none"
+            except Exception:
+                pass
+
+        # Initial state: show ProjectChart, hide CategoryPanel
+        self._apply_chart_visibility()
+
         self.action_refresh()
         self.set_interval(self.config.display.refresh_interval, lambda: self.refresh_data(force_oauth=False))
+
+    def _apply_chart_visibility(self) -> None:
+        """Show either ProjectChart or CategoryPanel based on self.show_category."""
+        try:
+            project_widget = self.query_one("#project-chart", ProjectChartWidget)
+            category_widget = self.query_one("#category-panel", CategoryPanelWidget)
+            if self.show_category:
+                project_widget.styles.display = "none"
+                category_widget.styles.display = "block"
+            else:
+                project_widget.styles.display = "block"
+                category_widget.styles.display = "none"
+        except Exception:
+            log.debug("Error applying chart visibility", exc_info=True)
+
+    def action_toggle_category(self) -> None:
+        """Toggle between ProjectChartWidget and CategoryPanelWidget."""
+        self.show_category = not self.show_category
+        self._apply_chart_visibility()
 
     def action_refresh(self) -> None:
         self.refresh_data(force_oauth=True)
@@ -104,10 +139,14 @@ class ClaudeUsageApp(App):
 
         widgets_updates = [
             (HeaderWidget, lambda w: w.update_info(data.account_name, data.period)),
-            (UsageGaugePanel, lambda w: w.update_usage(data.models, data.period)),
+            (
+                UsageGaugePanel,
+                lambda w: w.update_usage(data.models, data.period, data.one_shot_rate),
+            ),
             (CostPanelWidget, lambda w: w.update_costs(data.models)),
             (DailyChartWidget, lambda w: w.update_daily(data.daily)),
             (ProjectChartWidget, lambda w: w.update_projects(data.projects)),
+            (CategoryPanelWidget, lambda w: w.update_categories(data)),
             (QuotaPanelWidget, lambda w: w.update_activity(data)),
             (SessionListWidget, lambda w: w.update_sessions(data.sessions)),
         ]

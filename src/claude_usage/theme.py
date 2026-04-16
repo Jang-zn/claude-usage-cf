@@ -101,6 +101,15 @@ ProjectChartWidget {
     padding: 0 1;
 }
 
+CategoryPanelWidget {
+    width: 1fr;
+    height: auto;
+    min-height: 12;
+    background: #1a1a2e;
+    border: solid #8b7355;
+    padding: 0 1;
+}
+
 QuotaPanelWidget {
     width: 1fr;
     height: auto;

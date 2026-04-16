@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.scripts]
-claude-usage = "claude_usage.__main__:main"
+claude-usage = "claude_usage.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/claude_usage"]

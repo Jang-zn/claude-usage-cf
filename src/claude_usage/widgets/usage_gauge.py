@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from textual.widgets import Static
 
-from ..models import ModelUsage, TokenUsage
+from ..models import AggregatedUsage, ModelUsage, TokenUsage
 from ..theme import get_model_color
 from ._helpers import format_tokens, make_bar
 
@@ -17,7 +17,12 @@ class UsageGaugePanel(Static):
 
     _period: str = "week"
 
-    def update_usage(self, models: dict[str, ModelUsage], period: str = "") -> None:
+    def update_usage(
+        self,
+        models: dict[str, ModelUsage],
+        period: str = "",
+        one_shot_rate: float | None = None,
+    ) -> None:
         if period:
             self._period = period
 
@@ -47,10 +52,10 @@ class UsageGaugePanel(Static):
                 ordered.append((name, mu))
 
         # Scale bars relative to the model with most usage
-        max_total = max((mu.usage.total for _, mu in ordered), default=1) or 1
+        max_total = max((mu.usage.itpm_total for _, mu in ordered), default=1) or 1
 
         for name, mu in ordered:
-            total = mu.usage.total
+            total = mu.usage.itpm_total
             ratio = total / max_total
             color = get_model_color(name)
             bar = make_bar(ratio, width=28)
@@ -66,5 +71,12 @@ class UsageGaugePanel(Static):
             lines.append(
                 f"[{color}]{label} {bar}  {tokens_str:>7}[/]{avg_str}"
             )
+
+        # ── One-shot rate ───────────────────────────────
+        if one_shot_rate is None:
+            lines.append("  [dim]One-shot: n/a[/]")
+        else:
+            pct = round(one_shot_rate * 100)
+            lines.append(f"  [dim]One-shot:[/] [bold]{pct}%[/]")
 
         self.update("\n".join(lines))

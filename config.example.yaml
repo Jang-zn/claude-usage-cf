@@ -16,3 +16,8 @@ display:
   refresh_interval: 5
   default_period: "week"
   show_cost: true
+
+# Menu bar (macOS SwiftBar)
+menubar:
+  enabled: false
+  interval: "1m"  # Supported values: 30s, 1m, 5m, 1h

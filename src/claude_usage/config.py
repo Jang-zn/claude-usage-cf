@@ -32,6 +32,12 @@ class DisplayConfig:
 
 
 @dataclass
+class MenubarConfig:
+    enabled: bool = False
+    interval: str = "1m"  # 30s, 1m, 5m, 1h
+
+
+@dataclass
 class AppConfig:
     accounts: list[AccountConfig] = field(default_factory=lambda: [AccountConfig()])
     limits: list[LimitConfig] = field(default_factory=lambda: [
@@ -40,6 +46,7 @@ class AppConfig:
         LimitConfig("haiku", 45_000_000),
     ])
     display: DisplayConfig = field(default_factory=DisplayConfig)
+    menubar: MenubarConfig = field(default_factory=MenubarConfig)
 
     def get_limit(self, model_family: str) -> int:
         for lim in self.limits:
@@ -90,6 +97,12 @@ def _parse_config(raw: dict) -> AppConfig:
         show_cost=disp_raw.get("show_cost", True),
     )
 
+    mb_raw = raw.get("menubar", {})
+    menubar = MenubarConfig(
+        enabled=mb_raw.get("enabled", False),
+        interval=mb_raw.get("interval", "1m"),
+    )
+
     return AppConfig(
         accounts=accounts or [AccountConfig()],
         limits=limits or [
@@ -98,4 +111,5 @@ def _parse_config(raw: dict) -> AppConfig:
             LimitConfig("haiku", 45_000_000),
         ],
         display=display,
+        menubar=menubar,
     )
