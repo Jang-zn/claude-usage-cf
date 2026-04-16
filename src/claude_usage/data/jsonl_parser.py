@@ -77,27 +77,41 @@ def _parse_activities(content: list[dict], usage: TokenUsage) -> list[ActivityRe
         return []
 
     count = len(tool_uses)
-    # Split tokens evenly across tool_use blocks
-    per_tool = TokenUsage(
-        input_tokens=usage.input_tokens // count,
-        output_tokens=usage.output_tokens // count,
-        cache_read_tokens=usage.cache_read_tokens // count,
-        cache_creation_tokens=usage.cache_creation_tokens // count,
-    )
+
+    # A5: Distribute tokens evenly with remainder attributed to the first block
+    def _split(total: int) -> list[int]:
+        base = total // count
+        remainder = total - base * count
+        return [base + remainder] + [base] * (count - 1)
+
+    input_split = _split(usage.input_tokens)
+    output_split = _split(usage.output_tokens)
+    cache_read_split = _split(usage.cache_read_tokens)
+    cache_creation_split = _split(usage.cache_creation_tokens)
+    # web_search_requests: entire count attributed to first block only
+    web_search_split = [usage.web_search_requests] + [0] * (count - 1)
 
     activities: list[ActivityRecord] = []
-    for block in tool_uses:
+    for i, block in enumerate(tool_uses):
         name = block.get("name", "")
         input_data = block.get("input", {})
         if not isinstance(input_data, dict):
             input_data = {}
+
+        block_tokens = TokenUsage(
+            input_tokens=input_split[i],
+            output_tokens=output_split[i],
+            cache_read_tokens=cache_read_split[i],
+            cache_creation_tokens=cache_creation_split[i],
+            web_search_requests=web_search_split[i],
+        )
 
         if name == "TeamCreate" or (isinstance(input_data.get("teamName"), str) and input_data["teamName"]):
             activities.append(ActivityRecord(
                 category=ActivityCategory.TEAM,
                 name=name,
                 detail=input_data.get("teamName", ""),
-                tokens=per_tool,
+                tokens=block_tokens,
             ))
         elif name == "Agent":
             subagent_type = input_data.get("subagent_type", "")
@@ -105,7 +119,7 @@ def _parse_activities(content: list[dict], usage: TokenUsage) -> list[ActivityRe
                 category=ActivityCategory.AGENT,
                 name=name,
                 detail=subagent_type if isinstance(subagent_type, str) else "",
-                tokens=per_tool,
+                tokens=block_tokens,
             ))
         elif name.startswith("mcp__"):
             # mcp__<server>__<tool>
@@ -116,13 +130,13 @@ def _parse_activities(content: list[dict], usage: TokenUsage) -> list[ActivityRe
                 category=ActivityCategory.MCP,
                 name=server,
                 detail=tool,
-                tokens=per_tool,
+                tokens=block_tokens,
             ))
         else:
             activities.append(ActivityRecord(
                 category=ActivityCategory.TOOL,
                 name=name,
-                tokens=per_tool,
+                tokens=block_tokens,
             ))
 
     return activities
@@ -132,11 +146,15 @@ def _extract_usage_and_model(raw_usage: dict, raw_model: str) -> tuple[TokenUsag
     """Extract TokenUsage and normalized model from raw dicts."""
     if not isinstance(raw_usage, dict) or not isinstance(raw_model, str):
         return None
+    server_tool_use = raw_usage.get("server_tool_use", {})
+    if not isinstance(server_tool_use, dict):
+        server_tool_use = {}
     usage = TokenUsage(
         input_tokens=raw_usage.get("input_tokens", 0) or 0,
         output_tokens=raw_usage.get("output_tokens", 0) or 0,
         cache_read_tokens=raw_usage.get("cache_read_input_tokens", 0) or 0,
         cache_creation_tokens=raw_usage.get("cache_creation_input_tokens", 0) or 0,
+        web_search_requests=server_tool_use.get("web_search_requests", 0) or 0,
     )
     return usage, normalize_model(raw_model)
 
@@ -189,8 +207,27 @@ def _parse_subagent_record(data: dict, project: str) -> UsageRecord | None:
     )
 
 
-def parse_jsonl_file(filepath: str, incremental: bool = True) -> list[UsageRecord]:
-    """Parse a single JSONL file, optionally from last known offset."""
+def _make_dedup_key(msg_id: str | None, session_id: str, timestamp_iso: str) -> str:
+    """Build a dedup key: prefer msg.id, fall back to session_id:timestamp."""
+    if msg_id:
+        return msg_id
+    return f"{session_id}:{timestamp_iso}"
+
+
+def parse_jsonl_file(
+    filepath: str,
+    incremental: bool = True,
+    seen_ids: set[str] | None = None,
+) -> list[UsageRecord]:
+    """Parse a single JSONL file, optionally from last known offset.
+
+    Args:
+        filepath: Path to the JSONL file.
+        incremental: If True, continue from the last byte offset.
+        seen_ids: Optional shared set of message IDs for cross-file deduplication.
+                  Records whose dedup key is already in this set are skipped,
+                  and newly seen keys are added to it in-place.
+    """
     records: list[UsageRecord] = []
     start_offset = _file_offsets.get(filepath, 0) if incremental else 0
 
@@ -216,11 +253,21 @@ def parse_jsonl_file(filepath: str, incremental: bool = True) -> list[UsageRecor
                     continue
 
                 record_type = data.get("type")
+                session_id = data.get("sessionId", "")
+                timestamp_iso = data.get("timestamp", "")
 
                 if record_type == "assistant":
                     msg = data.get("message")
                     if not isinstance(msg, dict):
                         continue
+
+                    # A2: dedup by msg.id or fallback key
+                    msg_id = msg.get("id")
+                    dedup_key = _make_dedup_key(msg_id, session_id, timestamp_iso)
+                    if seen_ids is not None:
+                        if dedup_key in seen_ids:
+                            continue
+                        seen_ids.add(dedup_key)
 
                     result = _extract_usage_and_model(msg.get("usage"), msg.get("model", ""))
                     if result is None:
@@ -235,11 +282,22 @@ def parse_jsonl_file(filepath: str, incremental: bool = True) -> list[UsageRecor
                         model=model,
                         usage=usage,
                         project=project,
-                        session_id=data.get("sessionId", ""),
+                        session_id=session_id,
                         activities=activities,
                     ))
 
                 elif record_type == "progress":
+                    # A2: dedup progress records using inner msg.id if available
+                    inner = data.get("data") or {}
+                    wrapper = inner.get("message") or {} if isinstance(inner, dict) else {}
+                    inner_msg = wrapper.get("message") or {} if isinstance(wrapper, dict) else {}
+                    inner_msg_id = inner_msg.get("id") if isinstance(inner_msg, dict) else None
+                    dedup_key = _make_dedup_key(inner_msg_id, session_id, timestamp_iso)
+                    if seen_ids is not None:
+                        if dedup_key in seen_ids:
+                            continue
+                        seen_ids.add(dedup_key)
+
                     rec = _parse_subagent_record(data, project)
                     if rec is not None:
                         records.append(rec)
@@ -260,6 +318,8 @@ def parse_all_jsonl(
 ) -> list[UsageRecord]:
     """Parse all JSONL files under claude_home/projects/*/.
 
+    Scans both top-level project JSONL files and subagents/**/*.jsonl.
+    Uses a shared seen_ids set across all files for cross-file deduplication.
     Only processes files modified within lookback_days.
     """
     projects_dir = claude_home / "projects"
@@ -268,17 +328,45 @@ def parse_all_jsonl(
 
     cutoff = time.time() - (lookback_days * 86400)
     records: list[UsageRecord] = []
+    # A2: shared dedup set across all files in this scan
+    seen_ids: set[str] = set()
 
     for project_dir in projects_dir.iterdir():
         if not project_dir.is_dir():
             continue
+
+        # Collect JSONL files: top-level + subagents (max 2-depth)
+        jsonl_files: list[tuple[Path, str | None]] = []
+
         for jsonl_file in project_dir.glob("*.jsonl"):
+            jsonl_files.append((jsonl_file, None))
+
+        # A3: subagents directory, up to 2 levels deep
+        for jsonl_file in project_dir.glob("subagents/*.jsonl"):
+            jsonl_files.append((jsonl_file, project_dir.name))
+        for jsonl_file in project_dir.glob("subagents/*/*.jsonl"):
+            jsonl_files.append((jsonl_file, project_dir.name))
+
+        for jsonl_file, parent_dir_name in jsonl_files:
             try:
                 mtime = jsonl_file.stat().st_mtime
             except OSError:
                 continue
             if mtime < cutoff:
                 continue
-            records.extend(parse_jsonl_file(str(jsonl_file), incremental=incremental))
+
+            file_records = parse_jsonl_file(
+                str(jsonl_file), incremental=incremental, seen_ids=seen_ids
+            )
+
+            # A3: if project name extraction returns empty, fall back to parent dir name
+            if parent_dir_name is not None:
+                for rec in file_records:
+                    if not rec.project:
+                        rec.project = _extract_project_name(
+                            str(project_dir / "placeholder.jsonl")
+                        ) or parent_dir_name
+
+            records.extend(file_records)
 
     return records
